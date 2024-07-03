@@ -7,7 +7,7 @@
         <NoWarn>$(NoWarn);NU5128</NoWarn>
 
         <!-- NuGet -->
-        <PackageId>TypedSignalR.Client.DevTools.Experimental</PackageId>
+        <PackageId>TypedSignalR.Client.DevTools</PackageId>
         <AssemblyName>TypedSignalR.Client.DevTools</AssemblyName>
         <Title>TypedSignalR.Client.DevTools</Title>
         <Description>SignalR development tools inspired by SwaggerUI.</Description>

@@ -12,7 +12,7 @@
         <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
 
         <!-- NuGet -->
-        <PackageId>TypedSignalR.Client.DevTools.Specification.Experimental</PackageId>
+        <PackageId>TypedSignalR.Client.DevTools.Specification</PackageId>
         <AssemblyName>TypedSignalR.Client.DevTools.Specification</AssemblyName>
         <Title>TypedSignalR.Client.DevTools.Specification</Title>
         <Description>SignalR development tools inspired by SwaggerUI.</Description>
