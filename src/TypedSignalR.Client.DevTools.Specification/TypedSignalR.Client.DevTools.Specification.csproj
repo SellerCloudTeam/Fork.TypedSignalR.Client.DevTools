@@ -12,7 +12,7 @@
         <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
 
         <!-- NuGet -->
-        <PackageId>TypedSignalR.Client.DevTools.Specification</PackageId>
+        <PackageId>TypedSignalR.Client.DevTools.Specification.Experimental</PackageId>
         <AssemblyName>TypedSignalR.Client.DevTools.Specification</AssemblyName>
         <Title>TypedSignalR.Client.DevTools.Specification</Title>
         <Description>SignalR development tools inspired by SwaggerUI.</Description>
@@ -23,6 +23,11 @@
         <RepositoryType>git</RepositoryType>
         <PackageTags>signalr;sourcegenerator</PackageTags>
         <Copyright>(c) nenoNaninu</Copyright>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <EmbedAllSources>true</EmbedAllSources>
+        <DebugSymbols>true</DebugSymbols>
+        <DebugType>embedded</DebugType>
+        <Version>1.0.12</Version>
     </PropertyGroup>
 
     <ItemGroup>

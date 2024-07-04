@@ -37,7 +37,12 @@ public static partial class EndpointRouteBuilderExtensions
 
         endpointRouteBuilder.MapGet("/signalr-dev", async (HttpContext context) =>
         {
-            context.Response.Redirect("/signalr-dev/index.html");
+            PathString pathBase = context.Request.PathBase;
+            string path = string.IsNullOrEmpty(pathBase) ? string.Empty : pathBase;
+            string redirectUrl = $"{path}/signalr-dev/index.html";
+
+            context.Response.Redirect(redirectUrl);
+
             await context.Response.CompleteAsync();
         });
     }

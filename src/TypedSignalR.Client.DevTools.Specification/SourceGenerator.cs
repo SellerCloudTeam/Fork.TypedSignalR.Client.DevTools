@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -31,6 +32,13 @@ public sealed class SourceGenerator : IIncrementalGenerator
                 return GetSpecialSymbols(compilation);
             });
 
+        var pathBaseSymbols = context.SyntaxProvider
+            .CreateSyntaxProvider(WhereUsePathBaseMethod, TransformUsePathBaseToSourceSymbol)
+            .Combine(specialSymbols)
+            .Select(ValidateUsePathBaseMethodSymbol)
+            .Where(static x => x.IsValid())
+            .Collect();
+
         var mapHubMethodSymbols = context.SyntaxProvider
             .CreateSyntaxProvider(WhereMapHubMethod, TransformToSourceSymbol)
             .Combine(specialSymbols)
@@ -38,7 +46,63 @@ public sealed class SourceGenerator : IIncrementalGenerator
             .Where(static x => x.IsValid())
             .Collect();
 
-        context.RegisterSourceOutput(mapHubMethodSymbols.Combine(specialSymbols), GenerateSource);
+        context.RegisterSourceOutput(mapHubMethodSymbols.Combine(specialSymbols).Combine(pathBaseSymbols), GenerateSource);
+    }
+
+    private static bool WhereUsePathBaseMethod(SyntaxNode syntaxNode, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (syntaxNode is InvocationExpressionSyntax invocationExpressionSyntax)
+        {
+            if (invocationExpressionSyntax.Expression is MemberAccessExpressionSyntax memberAccessExpressionSyntax)
+            {
+                if (memberAccessExpressionSyntax.Name.Identifier.ValueText is "UsePathBase")
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static SourceSymbol TransformUsePathBaseToSourceSymbol(GeneratorSyntaxContext context, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var node = context.Node as InvocationExpressionSyntax;
+        var target = node?.Expression as MemberAccessExpressionSyntax;
+
+        if (target is null)
+        {
+            return default;
+        }
+
+        var arguments = node!.ArgumentList.Arguments;
+
+        // Assumes UsePathBase is called as an extension method
+        //     UsePathBase<THub>(this IApplicationBuilder, PathString) -> 1
+        if (arguments.Count is not 1)
+        {
+            return default;
+        }
+
+        var path = GetPath(context, arguments[0].Expression);
+
+        if (string.IsNullOrEmpty(path))
+        {
+            return default;
+        }
+
+        var methodSymbol = context.SemanticModel.GetSymbolInfo(target).Symbol as IMethodSymbol;
+
+        if (methodSymbol is null)
+        {
+            return default;
+        }
+
+        return new SourceSymbol(methodSymbol, target.GetLocation(), path!);
     }
 
     private static bool WhereMapHubMethod(SyntaxNode syntaxNode, CancellationToken cancellationToken)
@@ -125,6 +189,39 @@ public sealed class SourceGenerator : IIncrementalGenerator
         return null;
     }
 
+    private static ValidatedSourceSymbol ValidateUsePathBaseMethodSymbol((SourceSymbol, SpecialSymbols) pair, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var sourceSymbol = pair.Item1;
+
+        if (sourceSymbol.IsNone())
+        {
+            return default;
+        }
+
+        var methodSymbol = sourceSymbol.MethodSymbol;
+        var location = sourceSymbol.Location;
+        var path = sourceSymbol.Path;
+        var specialSymbols = pair.Item2;
+
+        return new ValidatedSourceSymbol(methodSymbol, location, path);
+
+        // TODO: Validate against set of known UsePathBase methods (only one)
+        //
+        // var extensionMethodSymbol = methodSymbol.ReducedFrom ?? methodSymbol.ConstructedFrom;
+        //
+        // foreach (var usePathBaseMethodSymbol in specialSymbols.UsePathBaseMethodSymbols)
+        // {
+        //     if (SymbolEqualityComparer.Default.Equals(extensionMethodSymbol, usePathBaseMethodSymbol))
+        //     {
+        //         return new ValidatedSourceSymbol(methodSymbol, location, path);
+        //     }
+        // }
+        // 
+        // return default;
+    }
+
     private static ValidatedSourceSymbol ValidateMapHubMethodSymbol((SourceSymbol, SpecialSymbols) pair, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -154,14 +251,15 @@ public sealed class SourceGenerator : IIncrementalGenerator
         return default;
     }
 
-    private static void GenerateSource(SourceProductionContext context, (ImmutableArray<ValidatedSourceSymbol>, SpecialSymbols) data)
+    private static void GenerateSource(SourceProductionContext context, ((ImmutableArray<ValidatedSourceSymbol>, SpecialSymbols), ImmutableArray<ValidatedSourceSymbol>) data)
     {
-        var sourceSymbols = data.Item1;
-        var specialSymbols = data.Item2;
+        var sourceSymbols = data.Item1.Item1;
+        var specialSymbols = data.Item1.Item2;
+        var pathBase = data.Item2.SingleOrDefault().Path;
 
         try
         {
-            var serviceTypes = ExtractSignalRServiceTypesFromMapHubMethods(context, sourceSymbols, specialSymbols);
+            var serviceTypes = ExtractSignalRServiceTypesFromMapHubMethods(context, sourceSymbols, specialSymbols, pathBase);
 
             var template = new SpecificationTemplate(serviceTypes);
             var source = NormalizeNewLines(template.TransformText());
@@ -226,7 +324,8 @@ public sealed class SourceGenerator : IIncrementalGenerator
     private static IReadOnlyList<SignalRServiceTypeMetadata> ExtractSignalRServiceTypesFromMapHubMethods(
         SourceProductionContext context,
         IReadOnlyList<ValidatedSourceSymbol> mapHubMethodSymbols,
-        SpecialSymbols specialSymbols)
+        SpecialSymbols specialSymbols,
+        string? pathBase)
     {
         var serviceTypeList = new List<SignalRServiceTypeMetadata>(mapHubMethodSymbols.Count);
 
@@ -249,11 +348,15 @@ public sealed class SourceGenerator : IIncrementalGenerator
 
                 var isAuthRequired = AnalyzeRequiredAuth(context, serviceTypeSymbol, specialSymbols);
 
+                var hubPathWithBase = string.IsNullOrWhiteSpace(pathBase)
+                    ? mapHubMethod.Path
+                    : $"{pathBase.TrimEnd('/')}/{mapHubMethod.Path.TrimStart('/')}";
+
                 serviceTypeList.Add(new SignalRServiceTypeMetadata(
                     serviceTypeSymbol,
                     hubType,
                     receiverType,
-                    mapHubMethod.Path,
+                    hubPathWithBase,
                     isAuthRequired
                 ));
             }
